@@ -3,7 +3,7 @@ const async = require('async');
 const readline = require('readline');
 const request = require('request');
 
-const zuoraSandboxSubdomain = '';
+const zuoraSandboxSubdomain = ''; // apisandbox.
 const zuoraUsername = '';
 const zuoraPassword = '';
 const zuoraAuthHeaders = {
@@ -16,32 +16,43 @@ const urlPrefix = `https://rest.${zuoraSandboxSubdomain}zuora.com`;
 const rl = readline.createInterface({
     input: fs.createReadStream('accountids.csv')
 });
+const hasCookie = jar.getCookies(urlPrefix).length > 0;
 
 rl.on('line', (accountId) => {
-    const hasCookie = jar.getCookies(urlPrefix).length > 0;
+    let elapsedTime = 0;
     const steps = [
-        (step) => request({
-            url: `${urlPrefix}/v1/object/account/${accountId}`,
-            method: 'GET',
-            headers: (!hasCookie) ? zuoraAuthHeaders : {},
-            json: true,
-            forever: true,
-            jar: jar
-        }, (error, response, body) => {
-            if (body.BillToId === body.SoldToId) {
-                step(null, body.BillToId)
-            } else {
-                step(`Skipping account ${accountId} because it already has a dedicated SoldTo contact`);
-            }
-        }),
-        (billToId, step) => request({
-            url: `${urlPrefix}/v1/object/contact/${billToId}`,
-            method: 'GET',
-            headers: (!hasCookie) ? zuoraAuthHeaders : {},
-            json: true,
-            forever: true,
-            jar: jar
-        }, (error, response, body) => step(error, body)),
+        (step) => {
+            request({
+                url: `${urlPrefix}/v1/object/account/${accountId}?fields=BillToId,SoldToId`,
+                method: 'GET',
+                headers: (!hasCookie) ? zuoraAuthHeaders : {},
+                json: true,
+                forever: true,
+                jar: jar,
+                time: true
+            }, (error, response, body) => {
+                elapsedTime += response.elapsedTime;
+                if (body.BillToId === body.SoldToId) {
+                    step(null, body.BillToId)
+                } else {
+                    step(`Skipping account ${accountId} because it already has a dedicated SoldTo contact`);
+                }
+            });
+        },
+        (billToId, step) => {
+            request({
+                url: `${urlPrefix}/v1/object/contact/${billToId}`,
+                method: 'GET',
+                headers: (!hasCookie) ? zuoraAuthHeaders : {},
+                json: true,
+                forever: true,
+                jar: jar,
+                time: true
+            }, (error, response, body) => {
+                elapsedTime += response.elapsedTime;
+                step(error, body)
+            });
+        },
         (contact, step) => {
             delete contact.Id;
             request({
@@ -51,8 +62,12 @@ rl.on('line', (accountId) => {
                 body: contact,
                 json: true,
                 forever: true,
-                jar: jar
-            }, (error, response, body) => step(error, body.Id));
+                jar: jar,
+                time: true
+            }, (error, response, body) => {
+                elapsedTime += response.elapsedTime;
+                step(error, body.Id)
+            });
         },
         (soldToId, step) => {
             request({
@@ -64,8 +79,12 @@ rl.on('line', (accountId) => {
                 },
                 json: true,
                 forever: true,
-                jar: jar
-            }, (error, response, body) => step(error, `Updated account: ${body.Id}`));
+                jar: jar,
+                time: true
+            }, (error, response, body) => {
+                elapsedTime += response.elapsedTime;
+                step(error, `Updated account: ${body.Id} (took ${elapsedTime}ms)`)
+            });
         }
     ];
     async.waterfall(steps, console.log);
