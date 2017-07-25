@@ -1,0 +1,11 @@
+{
+  "name": "zuora-clone-bill-to-as-sold-to",
+  "version": "1.0.0",
+  "dependencies": {
+    "async": "2.3.0",
+    "request": "2.81.0"
+  },
+  "scripts": {
+    "clone": "node clone.js"
+  }
+}
