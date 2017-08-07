@@ -1,25 +1,29 @@
-const fs = require('fs');
-const async = require('async');
-const readline = require('readline');
-const request = require('request');
+const fs = require('fs')
+const async = require('async')
+const readline = require('readline')
+const request = require('request')
 
-const zuoraSandboxSubdomain = ''; // apisandbox.
-const zuoraUsername = '';
-const zuoraPassword = '';
+const zuoraSandboxSubdomain = '' // apisandbox.
+const zuoraUsername = ''
+const zuoraPassword = ''
 const zuoraAuthHeaders = {
     apiAccessKeyId: zuoraUsername,
     apiSecretAccessKey: zuoraPassword
-};
-const jar = request.jar();
-const urlPrefix = `https://rest.${zuoraSandboxSubdomain}zuora.com`;
+}
+const jar = request.jar()
+const urlPrefix = `https://rest.${zuoraSandboxSubdomain}zuora.com`
 
 const rl = readline.createInterface({
     input: fs.createReadStream('accountids.csv')
-});
-const hasCookie = jar.getCookies(urlPrefix).length > 0;
+})
+const hasCookie = jar.getCookies(urlPrefix).length > 0
+
+const allSteps = []
 
 rl.on('line', (accountId) => {
-    let elapsedTime = 0;
+    if (!accountId) return
+
+    let elapsedTime = 0
     const steps = [
         (step) => {
             request({
@@ -31,13 +35,17 @@ rl.on('line', (accountId) => {
                 jar: jar,
                 time: true
             }, (error, response, body) => {
-                elapsedTime += response.elapsedTime;
+                if (error) {
+                    step(error)
+                    return
+                }
+                elapsedTime += response.elapsedTime
                 if (body.BillToId === body.SoldToId) {
                     step(null, body.BillToId)
                 } else {
-                    step(`Skipping account ${accountId} because it already has a dedicated SoldTo contact`);
+                    step(`Skipping account ${accountId} because it already has a dedicated SoldTo contact`)
                 }
-            });
+            })
         },
         (billToId, step) => {
             request({
@@ -49,12 +57,12 @@ rl.on('line', (accountId) => {
                 jar: jar,
                 time: true
             }, (error, response, body) => {
-                elapsedTime += response.elapsedTime;
+                elapsedTime += response.elapsedTime
                 step(error, body)
-            });
+            })
         },
         (contact, step) => {
-            delete contact.Id;
+            delete contact.Id
             request({
                 url: `${urlPrefix}/v1/object/contact`,
                 method: 'POST',
@@ -65,9 +73,9 @@ rl.on('line', (accountId) => {
                 jar: jar,
                 time: true
             }, (error, response, body) => {
-                elapsedTime += response.elapsedTime;
+                elapsedTime += response.elapsedTime
                 step(error, body.Id)
-            });
+            })
         },
         (soldToId, step) => {
             request({
@@ -82,12 +90,20 @@ rl.on('line', (accountId) => {
                 jar: jar,
                 time: true
             }, (error, response, body) => {
-                elapsedTime += response.elapsedTime;
+                elapsedTime += response.elapsedTime
                 step(error, `Updated account: ${body.Id} (took ${elapsedTime}ms)`)
-            });
+            })
         }
-    ];
-    async.waterfall(steps, console.log);
-});
+    ]
+    allSteps.push((callback) => {
+        async.waterfall(steps, (err, result) => {
+            if (err) console.log(err)
+            if (result) console.log(result)
+            callback(null, result)
+        })
+    })
+})
 
-rl.on('close', console.log);
+rl.on('close', () => {
+    async.parallelLimit(allSteps, 1, (err, results) => console.log(err, `${results.length} accounts processed.`))
+})
